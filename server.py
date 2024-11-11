@@ -1,29 +1,34 @@
 import os
-from flask import Flask, request, Response, abort
+from flask import Flask, request, Response, abort, jsonify
 import requests
 import m3u8
 from urllib.parse import urlparse, urljoin
 import logging
 from flask_caching import Cache
 from datetime import datetime
-
-app = Flask(__name__)
+from functools import wraps
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # =======================
 # Configuration
 # =======================
 
-# Base URL for the proxy server (should match your server's domain)
-PROXY_BASE_URL = "https://m3u8.adgstudios.co.za"
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
-# Base URL for the target server (the original streaming server)
-TARGET_BASE_URL = "https://www088.anzeat.pro/streamhls/0b594d900f47daabc194844092384914/"
+# Base URL for the proxy server (should match your server's domain)
+PROXY_BASE_URL = os.getenv("PROXY_BASE_URL", "https://m3u8.adgstudios.co.za")
 
 # Timeout for HTTP requests in seconds
-TIMEOUT = 10
+TIMEOUT = int(os.getenv("TIMEOUT", "10"))
 
 # Directory to save modified playlists
-SAVE_DIRECTORY = "modified_playlists"
+SAVE_DIRECTORY = os.getenv("SAVE_DIRECTORY", "modified_playlists")
+
+# Allowed domains for proxying
+ALLOWED_DOMAINS = os.getenv("ALLOWED_DOMAINS", "www088.anzeat.pro,www083.anzeat.pro").split(',')
 
 # =======================
 # Setup Logging
@@ -47,8 +52,19 @@ cache_config = {
     "CACHE_TYPE": "SimpleCache",       # Use SimpleCache for development; consider RedisCache for production
     "CACHE_DEFAULT_TIMEOUT": 300       # Cache timeout in seconds (e.g., 5 minutes)
 }
+app = Flask(__name__)
 app.config.from_mapping(cache_config)
 cache = Cache(app)
+
+# =======================
+# Setup Rate Limiting
+# =======================
+
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 # =======================
 # Route History Tracking
@@ -82,8 +98,8 @@ def construct_proxy_url(requested_path):
     """
     Constructs the proxy URL for a given requested path.
     Example:
-        requested_path = 'ep.1.1703914189.m3u8'
-        proxy_url = 'https://m3u8.adgstudios.co.za/proxy/ep.1.1703914189.m3u8'
+        requested_path = 'www088.anzeat.pro/streamhls/.../ep.1.1703914189.m3u8'
+        proxy_url = 'https://m3u8.adgstudios.co.za/proxy/www088.anzeat.pro/streamhls/.../ep.1.1703914189.m3u8'
     """
     return f"{PROXY_BASE_URL}/proxy/{requested_path}"
 
@@ -91,10 +107,10 @@ def get_target_url(requested_path):
     """
     Constructs the target URL based on the requested path.
     Example:
-        requested_path = 'ep.1.1703914189.m3u8'
-        target_url = 'https://www088.anzeat.pro/streamhls/0b594d900f47daabc194844092384914/ep.1.1703914189.m3u8'
+        requested_path = 'www088.anzeat.pro/streamhls/.../ep.1.1703914189.m3u8'
+        target_url = 'https://www088.anzeat.pro/streamhls/.../ep.1.1703914189.m3u8'
     """
-    return urljoin(TARGET_BASE_URL, requested_path)
+    return f"https://{requested_path}"
 
 def is_master_playlist(playlist):
     """
@@ -103,11 +119,25 @@ def is_master_playlist(playlist):
     """
     return playlist.is_variant
 
+def require_api_key(f):
+    """
+    Decorator to require an API key for accessing certain endpoints.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        api_key = request.headers.get('X-API-KEY')
+        if api_key != os.getenv("API_KEY", "your_default_api_key"):
+            logger.warning("Unauthorized access attempt.")
+            abort(403, description="Forbidden: Invalid or missing API key.")
+        return f(*args, **kwargs)
+    return decorated
+
 # =======================
 # Proxy Endpoint
 # =======================
 
 @app.route('/proxy/<path:requested_path>')
+@limiter.limit("100 per hour")  # Apply rate limiting to this endpoint
 @cache.cached()  # Cache the response based on the requested path
 def proxy(requested_path):
     """
@@ -122,12 +152,8 @@ def proxy(requested_path):
         logger.error(f"Invalid target URL: {target_url}")
         return Response("Invalid target URL.", status=400)
     
-    # =======================
-    # Security: Allowed Domains
-    # =======================
-    
-    # Ensure the target URL starts with the TARGET_BASE_URL
-    if not target_url.startswith(TARGET_BASE_URL):
+    # Security: Ensure the target URL is in the allowed domains
+    if parsed_target.netloc not in ALLOWED_DOMAINS:
         logger.error(f"Disallowed target URL: {target_url}")
         return Response("Disallowed target URL.", status=403)
     
@@ -170,10 +196,10 @@ def handle_m3u8(target_url, requested_path):
             # Handle relative URLs
             if not is_absolute_url(original_uri):
                 original_uri = urljoin(target_url, original_uri)
-            # Extract the path relative to the TARGET_BASE_URL
+            # Extract the path relative to the domain
             parsed_original = urlparse(original_uri)
-            relative_path = os.path.relpath(parsed_original.path, urlparse(TARGET_BASE_URL).path)
-            proxied_uri = construct_proxy_url(relative_path)
+            relative_path = parsed_original.netloc + parsed_original.path
+            proxied_uri = construct_proxy_url(relative_path.lstrip('/'))
             logger.debug(f"Modifying stream URI: {original_uri} -> {proxied_uri}")
             playlist_item.uri = proxied_uri
             # Log the route
@@ -186,10 +212,10 @@ def handle_m3u8(target_url, requested_path):
             # Handle relative URLs
             if not is_absolute_url(original_uri):
                 original_uri = urljoin(target_url, original_uri)
-            # Extract the path relative to the TARGET_BASE_URL
+            # Extract the path relative to the domain
             parsed_original = urlparse(original_uri)
-            relative_path = os.path.relpath(parsed_original.path, urlparse(TARGET_BASE_URL).path)
-            proxied_uri = construct_proxy_url(relative_path)
+            relative_path = parsed_original.netloc + parsed_original.path
+            proxied_uri = construct_proxy_url(relative_path.lstrip('/'))
             logger.debug(f"Modifying segment URI: {original_uri} -> {proxied_uri}")
             segment.uri = proxied_uri
             # Log the route
@@ -257,6 +283,18 @@ def handle_other(target_url, requested_path):
     return Response(generate(), content_type=content_type)
 
 # =======================
+# Route History Endpoint
+# =======================
+
+@app.route('/history')
+@require_api_key
+def history():
+    """
+    Returns the route history in JSON format.
+    """
+    return jsonify(route_history)
+
+# =======================
 # Index Route
 # =======================
 
@@ -267,16 +305,41 @@ def index():
     """
     return """
     <h1>Python Reverse Proxy Server</h1>
-    <p>Use the <code>/proxy/<em>path/to/file</em></code> endpoint to access content via the proxy.</p>
-    <p>Example: <a href="/proxy/ep.1.1703914189.m3u8">Proxy Playlist</a></p>
+    <p>Use the <code>/proxy/<em>target_domain/path/to/file</em></code> endpoint to access content via the proxy.</p>
+    <p>Examples:</p>
+    <ul>
+        <li><a href="/proxy/www088.anzeat.pro/streamhls/0b594d900f47daabc194844092384914/ep.1.1703914189.m3u8">Proxy Playlist 1</a></li>
+        <li><a href="/proxy/www083.anzeat.pro/streamhls/6d59b534bed63f3ac8097a6033657c95/ep.1.1703911043.m3u8">Proxy Playlist 2</a></li>
+    </ul>
+    <p>To view route history, access <code>/history</code> endpoint with proper API key.</p>
     """
+
+# =======================
+# Error Handlers
+# =======================
+
+@app.errorhandler(403)
+def forbidden(e):
+    return jsonify(error="Forbidden: You don't have permission to access this resource."), 403
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify(error="Not Found: The requested resource could not be found."), 404
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    return jsonify(error="Too Many Requests: You have exceeded your rate limit."), 429
+
+@app.errorhandler(500)
+def internal_error(e):
+    return jsonify(error="Internal Server Error: An unexpected error occurred."), 500
 
 # =======================
 # Run the Flask App
 # =======================
 
 if __name__ == '__main__':
-    # Optionally, allow the host and port to be set via environment variables
-    host = os.environ.get('PROXY_HOST', '0.0.0.0')
-    port = int(os.environ.get('PROXY_PORT', 9000))
+    # Allow the host and port to be set via environment variables
+    host = os.getenv('PROXY_HOST', '0.0.0.0')
+    port = int(os.getenv('PROXY_PORT', '9000'))
     app.run(host=host, port=port, threaded=True)
