@@ -1,4 +1,7 @@
 import os
+import time
+import random
+import re
 from flask import Flask, request, Response
 import requests
 import m3u8
@@ -63,7 +66,7 @@ def proxy():
 
     try:
         if path.endswith('.m3u8'):
-            return handle_m3u8(target_url)
+            return handle_m3u8(target_url, parsed_target)
         else:
             return handle_other(target_url)
     except requests.RequestException as e:
@@ -74,7 +77,7 @@ def proxy():
         return Response(f"Unexpected error: {e}", status=500)
 
 @cache.memoize(timeout=300)  # Cache the result of handle_m3u8 for 5 minutes
-def handle_m3u8(target_url):
+def handle_m3u8(target_url, parsed_target):
     """
     Fetches the M3U8 playlist, modifies it to route stream and segment URLs through the proxy, and serves it.
     Handles both master and media playlists.
@@ -110,9 +113,18 @@ def handle_m3u8(target_url):
 
     modified_playlist = playlist.dumps()
 
-    # Parse the target URL to extract the filename
-    parsed_target = urlparse(target_url)
-    filename = os.path.basename(parsed_target.path)
+    # Extract episode number from the target URL using regex
+    match = re.search(r'ep\.(\d+)\.\d+\.m3u8', parsed_target.path)
+    if match:
+        episode_number = match.group(1)
+    else:
+        episode_number = "unknown"
+
+    # Generate a unique 10-digit identifier
+    unique_id = random.randint(1000000000, 9999999999)
+
+    # Construct the filename
+    filename = f"ep.{episode_number}.{unique_id}.m3u8"
     with open(filename, 'w') as file:
         file.write(modified_playlist)
     logger.info(f"Saved modified playlist as {filename}")
