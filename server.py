@@ -4,8 +4,12 @@ import m3u8
 from urllib.parse import urlparse, urljoin, urlencode
 from cachetools import TTLCache
 import threading
+from flask_cors import CORS
 
 app = Flask(__name__)
+
+# Enable CORS for all routes and origins
+CORS(app, resources={r"/proxy": {"origins": "*"}})
 
 # Configuration
 PROXY_BASE_URL = "https://m3u8.adgstudios.co.za/proxy"
@@ -57,6 +61,8 @@ def proxy():
             resp = make_response(cached_playlist)
             resp.headers['Content-Type'] = 'application/vnd.apple.mpegurl'
             resp.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+            # Allow CORS
+            resp.headers['Access-Control-Allow-Origin'] = '*'
             return resp
 
         try:
@@ -106,6 +112,8 @@ def proxy():
         resp.headers['Content-Length'] = len(modified_playlist)
         # Set Content-Disposition to suggest the original filename
         resp.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+        # Allow CORS
+        resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp
 
     else:
@@ -115,6 +123,8 @@ def proxy():
         if cached_segment:
             resp = Response(cached_segment, mimetype='video/MP2T')
             resp.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+            # Allow CORS
+            resp.headers['Access-Control-Allow-Origin'] = '*'
             return resp
 
         try:
@@ -144,6 +154,8 @@ def proxy():
         resp.headers['Content-Disposition'] = f'inline; filename="{filename}"'
         # Optionally, set Content-Length
         resp.headers['Content-Length'] = len(content)
+        # Allow CORS
+        resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp
 
 if __name__ == '__main__':
