@@ -11,7 +11,7 @@ from flask_caching import Cache
 app = Flask(__name__)
 
 # Configuration
-PROXY_BASE_URL = "http://localhost:9000"  # Update if running on a different host or port
+PROXY_BASE_URL = "http://ingress.adgstudios.co.za:9000"  # Update to your actual proxy URL
 TIMEOUT = 10  # Seconds for HTTP requests
 
 # Setup Logging
@@ -144,10 +144,14 @@ def handle_m3u8(target_url):
         logger.info(f"Saved modified playlist as {file_path}")
     except Exception as e:
         logger.exception(f"Failed to save modified playlist: {e}")
-        # Optionally, decide whether to proceed or return an error
         return Response(f"Failed to save modified playlist: {e}", status=500)
 
-    return Response(modified_playlist, mimetype='application/vnd.apple.mpegurl')
+    # Optionally, set the Content-Disposition header to prompt file download with the desired filename
+    headers = {
+        'Content-Disposition': f'attachment; filename="{filename}"'
+    }
+
+    return Response(modified_playlist, mimetype='application/vnd.apple.mpegurl', headers=headers)
 
 @cache.memoize(timeout=300)  # Cache the result of handle_other for 5 minutes
 def handle_other(target_url):
