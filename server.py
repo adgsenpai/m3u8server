@@ -7,8 +7,6 @@ import logging
 from flask_caching import Cache
 from datetime import datetime
 from functools import wraps
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 # =======================
 # Configuration
@@ -60,16 +58,6 @@ app.config.from_mapping(cache_config)
 cache = Cache(app)
 
 # =======================
-# Setup Rate Limiting
-# =======================
-
-limiter = Limiter(
-    app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
-)
-
-# =======================
 # Route History Tracking
 # =======================
 
@@ -115,7 +103,6 @@ def require_api_key(f):
 # =======================
 
 @app.route('/proxy')
-@limiter.limit("100 per hour")  # Apply rate limiting to this endpoint
 @cache.cached(query_string=True)  # Cache based on the full query string
 def proxy():
     """
