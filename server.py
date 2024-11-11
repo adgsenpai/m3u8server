@@ -11,7 +11,7 @@ from flask_caching import Cache
 app = Flask(__name__)
 
 # Configuration
-PROXY_BASE_URL = "http://ingress.adgstudios.co.za:9000"  # Update to your actual proxy URL
+PROXY_BASE_URL = "https://m3u8.adgstudios.co.za"  # Base URL for the proxy server
 TIMEOUT = 10  # Seconds for HTTP requests
 
 # Setup Logging
