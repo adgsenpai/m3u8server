@@ -9,7 +9,7 @@ from flask_caching import Cache
 app = Flask(__name__)
 
 # Configuration
-PROXY_BASE_URL = "http://localhost:5000"  # Update if running on a different host or port
+PROXY_BASE_URL = "http://localhost:9000"  # Update if running on a different host or port
 TIMEOUT = 10  # Seconds for HTTP requests
 
 # Setup Logging
@@ -109,7 +109,13 @@ def handle_m3u8(target_url):
             segment.uri = proxied_uri
 
     modified_playlist = playlist.dumps()
-    logger.info("Serving modified M3U8 playlist.")
+
+    # Save the modified playlist to a file with the original name derived from the URL
+    filename = os.path.basename(parsed_target.path)
+    with open(filename, 'w') as file:
+        file.write(modified_playlist)
+    logger.info(f"Saved modified playlist as {filename}")
+
     return Response(modified_playlist, mimetype='application/vnd.apple.mpegurl')
 
 @cache.memoize(timeout=300)  # Cache the result of handle_other for 5 minutes
@@ -152,5 +158,5 @@ def index():
 if __name__ == '__main__':
     # Optionally, allow the host and port to be set via environment variables
     host = os.environ.get('PROXY_HOST', '0.0.0.0')
-    port = int(os.environ.get('PROXY_PORT', 5000))
+    port = int(os.environ.get('PROXY_PORT', 9000))
     app.run(host=host, port=port, threaded=True)
