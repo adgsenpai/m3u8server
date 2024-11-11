@@ -110,7 +110,8 @@ def handle_m3u8(target_url):
 
     modified_playlist = playlist.dumps()
 
-    # Save the modified playlist to a file with the original name derived from the URL
+    # Parse the target URL to extract the filename
+    parsed_target = urlparse(target_url)
     filename = os.path.basename(parsed_target.path)
     with open(filename, 'w') as file:
         file.write(modified_playlist)
